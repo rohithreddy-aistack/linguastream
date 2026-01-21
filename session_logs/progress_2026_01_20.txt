@@ -1,0 +1,41 @@
+# Linguastream Progress Report & Error Log
+Date: January 20, 2026
+
+## ✅ Progress Summary
+We have successfully completed the core "Audio Capture & VAD" phase (Week 1). The system can now:
+1.  Capture high-fidelity audio from a specific browser tab (YouTube).
+2.  Stream it to a local Python backend via WebSockets.
+3.  Process the audio in real-time (Resample 44.1kHz -> 16kHz).
+4.  Apply Silero VAD (Voice Activity Detection) to filter out music/silence.
+5.  Save only the spoken segments to a `.wav` file.
+
+## ⚠️ Errors Encountered & Solutions
+
+### 1. WebSocket Connection Failed (`localhost` vs `127.0.0.1`)
+*   **Error:** `WebSocket connection to 'ws://localhost:8000/ws/stream' failed`
+*   **Cause:** Chrome extensions (Manifest V3) and some network configurations treat `localhost` differently than `127.0.0.1`, leading to connection refusals.
+*   **Solution:** Updated `offscreen.js` to explicitly connect to `ws://127.0.0.1:8000/ws/stream`.
+
+### 2. Tab Capture `AbortError` / `TypeError`
+*   **Error:** `AbortError: Error starting tab capture` and `TypeError: Cannot read properties of undefined (reading 'getMediaStreamId')`
+*   **Cause:**
+    *   `chrome.tabCapture.getMediaStreamId` was being called inside the offscreen document, where the API is restricted or behaves differently regarding "consumer" validation.
+    *   There was a mismatch between the tab being recorded (`targetTabId`) and the context requesting the stream (`consumerTabId`).
+*   **Solution:**
+    *   Moved `getMediaStreamId` logic back to `background.js` (the privileged context).
+    *   Removed `consumerTabId` parameter, allowing the stream to be consumed by any part of the extension (including the offscreen doc).
+    *   Passed the generated `streamId` to the offscreen document.
+
+### 3. Silero VAD `ValueError` (Incorrect Tensor Size)
+*   **Error:** `ValueError: Provided number of samples is 1486 (Supported values: 256 for 8000 sample rate, 512 for 16000)`
+*   **Cause:** The backend was processing audio in arbitrary chunk sizes (whatever arrived over the WebSocket). The Silero VAD model strictly requires chunks of exactly 512 samples (at 16kHz) for inference.
+*   **Solution:** Implemented a **Ring Buffer (Jitter Buffer)** logic in Python:
+    *   Accumulate incoming bytes into a `vad_buffer`.
+    *   Loop and extract exactly 512 samples.
+    *   Run VAD inference on the 512-sample chunk.
+    *   Repeat until the buffer has fewer than 512 samples.
+
+## 🔜 Next Steps (Week 2 Roadmap)
+1.  **Refactoring:** Move the large `audio_stream` logic from `main.py` into a dedicated `audio/processor.py` module.
+2.  **Quality:** Switch from basic `resample` to `scipy.signal.resample_poly` for better anti-aliasing.
+3.  **Loopback Test:** Build an endpoint that echoes audio back to the browser to let us *hear* the latency.
