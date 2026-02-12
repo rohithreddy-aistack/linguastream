@@ -1,9 +1,13 @@
 import wave
-import torch
-import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from scipy.signal import resample
+import asyncio
+import json
 import uvicorn
+import time
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from app.audio.processor import AudioProcessor
+from app.services.deepgram_client import DeepgramService
+from app.services.sarvam_translate_client import SarvamTranslateService
+from app.services.elevenlabs_client import ElevenLabsService
 
 app = FastAPI()
 
@@ -11,93 +15,125 @@ app = FastAPI()
 OUTPUT_FILE = "test_capture_speech_only.wav"
 BROWSER_RATE = 44100
 TARGET_RATE = 16000
-VAD_THRESHOLD = 0.5  # Confidence level (0.0 - 1.0)
+VAD_THRESHOLD = 0.5
 
-# --- 1. Load Silero VAD Model (On Startup) ---
-print("⏳ Loading VAD Model...")
-model, utils = torch.hub.load(
-    repo_or_dir='snakers4/silero-vad',
-    model='silero_vad',
-    force_reload=False,
-    trust_repo=True
+# Initialize Audio Processor (Keep VAD for local filtering if needed, or rely on Deepgram's VAD)
+# We will still use it for Resampling.
+processor = AudioProcessor(
+    browser_rate=BROWSER_RATE,
+    target_rate=TARGET_RATE,
+    vad_threshold=VAD_THRESHOLD
 )
-(get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
-print("✅ VAD Model Loaded")
-
-# --- Helper Functions ---
-def process_audio_chunk(raw_bytes: bytes):
-    """
-    1. Convert bytes to Int16 Numpy array
-    2. Resample to 16kHz
-    """
-    # Convert bytes to Int16
-    audio_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
-
-    # Resample (44100 -> 16000)
-    # Calculate number of samples in new rate
-    num_samples = int(len(audio_int16) * TARGET_RATE / BROWSER_RATE)
-    audio_resampled = resample(audio_int16, num_samples).astype(np.int16)
-
-    return audio_resampled
 
 @app.get("/")
 def home():
-    return {"status": "LinguaStream Backend is Running", "vad_loaded": True}
+    return {"status": "LinguaStream Backend is Running (3-Stage Pipeline)", "vad_loaded": True}
 
 @app.websocket("/ws/stream")
-async def audio_stream(websocket: WebSocket):
+async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
     await websocket.accept()
-    print("✅ Client Connected")
+    print(f"✅ Client Connected (Stream) | Target Lang: {lang}")
 
-    # Buffer for VAD processing (holds 16kHz int16 samples)
-    vad_buffer = np.array([], dtype=np.int16)
-    VAD_WINDOW_SIZE = 512  # Silero VAD requires exactly 512 samples at 16kHz
+    # --- Initialize Services ---
+    deepgram_service = DeepgramService()
+    translator_service = SarvamTranslateService()
+    tts_service = ElevenLabsService()
 
-    # Open WAV file for recording "Speech Only"
+    # --- Pipeline Logic ---
+    async def on_transcript_received(transcript_text, is_final):
+        """
+        Callback when Deepgram returns a transcript (Stage 1).
+        Triggers Stage 2 (Translation) and Stage 3 (TTS).
+        """
+        if not transcript_text:
+            return
+
+        print(f"🎤 [ASR] English: {transcript_text} (Final: {is_final})")
+
+        # Only translate/dub if the sentence is final
+        if is_final:
+            # --- Stage 2: Translation (Sarvam) ---
+            print(f"🔄 [Translate] Translating to {lang}: '{transcript_text}'...")
+            target_text = await translator_service.translate(transcript_text, target_lang=lang)
+            
+            if target_text:
+                print(f"🇮🇳 [Translate] Target ({lang}): {target_text}")
+                
+                # Send Target transcript to UI
+                try:
+                    await websocket.send_json({
+                        "type": "transcript",
+                        "text": target_text,
+                        "lang": lang,
+                        "is_final": True
+                    })
+                    print(f"📤 Sent {lang} transcript to UI: {target_text}")
+                except Exception as e:
+                    print(f"⚠️ Failed to send {lang} transcript: {e}")
+
+                # --- Stage 3: TTS (ElevenLabs) ---
+                print(f"🗣️ [TTS] Generating Audio for: '{target_text}'...")
+                
+                try:
+                    chunk_count = 0
+                    async for audio_chunk in tts_service.text_to_speech_stream(target_text):
+                        if audio_chunk:
+                            await websocket.send_bytes(audio_chunk)
+                            chunk_count += 1
+                    
+                    if chunk_count > 0:
+                        print(f"📤 Sent {chunk_count} TTS audio chunks to UI")
+                except Exception as e:
+                    print(f"⚠️ Failed to stream TTS audio: {e}")
+    
+    # --- Start Deepgram ---
+    await deepgram_service.connect(on_transcript_callback=on_transcript_received)
+
+    # Open WAV file for debug recording
     with wave.open(OUTPUT_FILE, "wb") as wav_file:
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2) # 16-bit
         wav_file.setframerate(TARGET_RATE)
 
         try:
+            message_count = 0
             while True:
-                # 1. Receive Raw Audio
+                # 1. Receive Raw Audio from Browser
                 data = await websocket.receive_bytes()
+                message_count += 1
+                
+                if message_count % 100 == 0:
+                    print(f"📥 Received {message_count} audio chunks from client...")
 
-                # 2. Process (Resample)
-                audio_int16 = process_audio_chunk(data)
+                # 2. Resample (44.1k -> 16k)
+                audio_resampled = processor.resample_chunk(data)
+                
+                # Write to local file (debug)
+                wav_file.writeframes(audio_resampled.tobytes())
 
-                # 3. Add to Buffer
-                vad_buffer = np.concatenate((vad_buffer, audio_int16))
-
-                # 4. Process in chunks of 512
-                while len(vad_buffer) >= VAD_WINDOW_SIZE:
-                    # Extract chunk
-                    chunk = vad_buffer[:VAD_WINDOW_SIZE]
-                    vad_buffer = vad_buffer[VAD_WINDOW_SIZE:]
-
-                    # Convert to Float32 for VAD (Normalize to -1.0 to 1.0)
-                    audio_float32 = chunk.astype(np.float32) / 32768.0
-
-                    # Convert numpy -> torch tensor
-                    tensor = torch.from_numpy(audio_float32)
-
-                    # Get speech confidence (0.0 to 1.0)
-                    speech_prob = model(tensor, TARGET_RATE).item()
-
-                    # The Gate Logic
-                    if speech_prob > VAD_THRESHOLD:
-                        # ✅ Speech Detected: Save it
-                        wav_file.writeframes(chunk.tobytes())
-                        print(f"🗣️ Speech Detected ({speech_prob:.2f})")
-                    else:
-                        # ❌ Music/Silence: Drop it
-                        pass
+                # 3. Send to Deepgram (Stage 1 Input)
+                await deepgram_service.send_audio(audio_resampled.tobytes())
 
         except WebSocketDisconnect:
-            print(f"\n❌ Client Disconnected. Saved speech to {OUTPUT_FILE}")
+            print(f"\n❌ Client Disconnected.")
         except Exception as e:
             print(f"\n⚠️ Error: {e}")
+        finally:
+            await deepgram_service.close()
+
+@app.websocket("/ws/loopback")
+async def loopback_stream(websocket: WebSocket):
+    await websocket.accept()
+    print("✅ Client Connected (Loopback)")
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            # Immediately send back for latency testing
+            await websocket.send_bytes(data)
+    except WebSocketDisconnect:
+        print("❌ Loopback Client Disconnected")
+    except Exception as e:
+        print(f"⚠️ Loopback Error: {e}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -1,10 +1,15 @@
 fastapi==0.100.0
 uvicorn==0.23.0
-websockets==11.0.3
-scipy==1.11.1
-numpy==1.25.0
+websockets>=13.0
+scipy>=1.9.0
+numpy>=1.24.0
 # PyTorch (CPU version is sufficient for VAD)
 torch --index-url https://download.pytorch.org/whl/cpu
 torchaudio --index-url https://download.pytorch.org/whl/cpu
 # Silero VAD is loaded via torch.hub, but we explicitly list omegaconf if needed by some versions
 omegaconf
+python-dotenv
+sarvamai
+deepgram-sdk>=3.4.0
+elevenlabs
+requests

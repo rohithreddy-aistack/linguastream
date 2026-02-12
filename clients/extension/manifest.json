@@ -3,12 +3,20 @@
   "version": "0.1.0",
   "manifest_version": 3,
   "description": "Stream tab audio to local Python server",
-  "permissions": ["tabCapture", "offscreen"],
+  "permissions": ["tabCapture", "offscreen", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "css": ["src/content.css"]
+    }
+  ],
   "action": {
-    "default_title": "Start Capture"
+    "default_title": "LinguaStream",
+    "default_popup": "src/popup.html"
   }
 }

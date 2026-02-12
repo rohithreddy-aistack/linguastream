@@ -1,0 +1,38 @@
+#linguastream-overlay {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 70%;
+    max-width: 900px;
+    background-color: rgba(0, 0, 0, 0.75);
+    color: white;
+    padding: 15px 25px;
+    border-radius: 12px;
+    z-index: 2147483647; /* Maximum possible z-index */
+    font-family: Arial, sans-serif;
+    font-size: 24px;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+#linguastream-overlay.hidden {
+    display: none;
+}
+
+.linguastream-text {
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+}
+
+.linguastream-partial {
+    color: #e0e0e0;
+}
+
+.linguastream-final {
+    color: #ffffff;
+}
