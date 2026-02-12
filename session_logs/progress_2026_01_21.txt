@@ -1,0 +1,57 @@
+Date: 2026-01-21
+Phase: Phase 1, Week 2 (Completed) & Phase 2, Week 3 (Backend Implementation Completed)
+
+**Changes Implemented:**
+
+### Phase 1: Foundation (Refactoring & Loopback)
+1.  **Backend Refactoring:**
+    - Created `backend/app/audio/processor.py` to encapsulate audio processing logic (resampling and VAD).
+    - Updated `backend/app/main.py` to use `AudioProcessor`, cleaning up the main application logic.
+    - Implemented `scipy.signal.resample_poly` for high-quality audio resampling (44.1kHz -> 16kHz).
+    - Created `backend/app/audio/__init__.py` and `backend/app/__init__.py` to ensure proper package structure.
+
+2.  **Loopback Feature:**
+    - Added `/ws/loopback` endpoint in `backend/app/main.py` for real-time latency testing.
+    - Added "Loopback Mode" toggle in the Chrome Extension popup to switch between recording and echo testing.
+
+3.  **Extension UI/UX:**
+    - Created `clients/extension/src/popup.html` and `clients/extension/src/popup.js` for a structured user interface.
+    - Added visual status indicators (Connected/Disconnected/Error) to the popup.
+    - Updated `clients/extension/src/background.js` and `clients/extension/src/offscreen.js` to handle status updates and routing for loopback mode.
+    - Updated `clients/extension/manifest.json` to point to the new popup.
+
+### Phase 2: Core Translation Engine (Sarvam AI Integration)
+1.  **Dependency Management:**
+    - Added `python-dotenv` for environment variable management.
+    - Added `sarvamai` SDK for interacting with the Sarvam AI API.
+    - Added `httpx` and `websockets` (dependencies of sarvamai).
+
+2.  **Configuration (`backend/app/core/config.py`):**
+    - Implemented a `Settings` class to load `SARVAM_API_KEY` and other constants from a `.env` file.
+    - Created `.env` and `.env.example` to securely store secrets.
+
+3.  **Sarvam Client (`backend/app/services/sarvam_client.py`):**
+    - **SDK Integration:** Utilized the `sarvamai.AsyncSarvamAI` class.
+    - **Streaming Logic:** Implemented `speech_to_text_translate_streaming` using the `saaras:v2.5` model.
+    - **Architecture Challenge:** The SDK uses an `async context manager` pattern (`async with ...`). Adapted this for a persistent WebSocket server by manually calling `__aenter__` in a `start()` method and `__aexit__` in a `close()` method.
+    - **Data Handling:** Implemented methods to convert raw PCM audio to Base64 (required by SDK) and yield async results.
+
+4.  **Main Application Integration (`backend/app/main.py`):**
+    - Integrated `SarvamClient` into the `/ws/stream` endpoint.
+    - **Concurrency:** Used `asyncio.create_task` to handle full-duplex communication:
+        - *Task A (Main Loop):* Receives audio from browser -> Resamples -> VAD Filter -> Sends to Sarvam.
+        - *Task B (Background):* Listens for transcripts from Sarvam -> Logs them to console (will send to frontend in Week 4).
+    - **Lifecycle:** Ensured graceful shutdown of the Sarvam connection when the browser disconnects.
+
+**Errors Encountered & Fixed:**
+-   **SyntaxError in `main.py`:** A `SyntaxError: 'await' outside async function` occurred because the `loopback_stream` function was defined as a synchronous `def` instead of `async def`. This was identified during the verification step and fixed immediately.
+-   **Import Error:** Initially encountered `ModuleNotFoundError: No module named 'uvicorn'` when verifying backend imports because the shell was using the system Python instead of the project's virtual environment. Resolved by explicitly invoking `.venv/bin/python3`.
+-   **SDK Pattern mismatch:** The `sarvamai` SDK is designed for single-use streams via context managers. We had to inspect the SDK source code (via temporary file copying) to understand how to decouple the connection logic for our long-running server.
+
+**Status:**
+-   **Phase 1 Week 2:** Complete.
+-   **Phase 2 Week 3:** Backend implementation complete. Waiting for API Key to verify end-to-end functionality.
+
+**Next Steps:**
+-   **Immediate:** User to obtain Sarvam API Key and add to `backend/.env`.
+-   **Week 4:** Build the Visual Overlay (`content.js`) to display the transcripts on the YouTube video.

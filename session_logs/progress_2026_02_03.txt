@@ -1,0 +1,48 @@
+# Session Log: Tuesday, February 3, 2026
+
+## 🚀 Summary of Achievements
+Today marked a significant architectural pivot for the LinguaStream project. We moved away from the single-pass "Speech-to-Text-Translate" model (Sarvam `saaras`) because it did not support English Audio -> Indian Language Audio (Dubbing). We successfully implemented a modular 3-stage pipeline.
+
+### **1. Major Architectural Pivot**
+*   **Old Architecture:** Sarvam `saaras:v2.5` (Indian Audio -> English Text).
+*   **New Architecture (Real-Time Dubbing):**
+    1.  **ASR (Speech-to-Text):** **Deepgram** (English Audio -> English Text).
+    *   2.  **Translation:** **Sarvam Translate API** (English Text -> Hindi/Indian Text).
+    *   3.  **TTS (Speech Synthesis):** **ElevenLabs** (Hindi Text -> Hindi Audio).
+
+### **2. Frontend Enhancements**
+*   **Language Picker:** Added a dropdown in `popup.html` to select target languages (Hindi, Telugu, Tamil, etc.).
+*   **State Management:** Updated `popup.js` and `background.js` to save language selection and pass it dynamically to the backend via WebSocket query params (`?lang=hi-IN`).
+*   **Bug Fixes:**
+    *   Fixed `popup.js` "Record" button unresponsiveness by adding the `storage` permission to `manifest.json`.
+    *   Corrected language codes/labels in `popup.html` (Gujarati, Marathi).
+    *   Fixed loopback toggle ID mismatch.
+
+### **3. Backend Development (FastAPI)**
+*   **Dependencies:** Updated `requirements.txt` to include `deepgram-sdk`, `elevenlabs`, and `requests`. Upgraded `websockets` to >=13.0 for compatibility.
+*   **Service Integration:**
+    *   `deepgram_client.py`: Implemented Deepgram WebSocket client for fast English transcription.
+    *   `sarvam_translate_client.py`: Implemented Sarvam HTTP client for high-quality English->Indian translation.
+    *   `elevenlabs_client.py`: Implemented ElevenLabs client for realistic TTS.
+*   **Orchestrator (`main.py`):**
+    *   Completely refactored `audio_stream` WebSocket handler.
+    *   Implemented the sequential chain: `Deepgram -> Sarvam -> ElevenLabs`.
+    *   Added logic to handle intermediate results and send both transcripts and audio back to the frontend.
+
+### **4. Challenges & Resolutions**
+*   **Sarvam SDK Validation Error:** Encountered `audio.encoding` validation errors with the Sarvam SDK. **Solution:** Replaced with the new 3-stage pipeline which uses HTTP for translation, bypassing this specific SDK issue entirely.
+*   **Dependency Conflicts:**
+    *   `scipy`/`numpy` version mismatch with Python 3.14. **Fix:** Relaxed constraints in `requirements.txt`.
+    *   `ElevenLabs` requiring `websockets>=13.0`. **Fix:** Upgraded package.
+    *   `Deepgram` SDK v3 import errors (`DeepgramClientOptions`). **Fix:** Updated client initialization to match v3/v5 syntax.
+    *   `SyntaxError` in `loopback_stream`: **Fix:** Added missing `async` keyword.
+
+## 📝 Current Status
+*   **Backend:** Running with the full 3-stage pipeline logic.
+*   **Frontend:** Fully functional with language selection.
+*   **Pipeline:** Ready for end-to-end testing.
+
+## ⏭️ Next Steps (Session Handoff)
+1.  **Verify End-to-End Flow:** Test the full pipeline with a live YouTube video.
+2.  **Latency Optimization:** Measure the total delay (ASR + Translation + TTS) and implement buffering/optimizations if needed.
+3.  **Audio Ducking:** Implement the `content.js` logic to lower video volume when dubbed audio plays.

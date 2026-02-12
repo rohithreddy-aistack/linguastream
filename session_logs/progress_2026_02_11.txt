@@ -1,0 +1,19 @@
+# Progress Report - February 11, 2026
+
+## Improvements & Fixes
+- **Streaming Dubbing Pipeline:** Fully implemented real-time audio streaming from ElevenLabs to the browser.
+- **Audio Synchronization:** Resolved the "fast-forwarded" audio issue by matching the frontend `AudioContext` sample rate (16kHz) to the backend PCM output.
+- **Gapless Playback:** Implemented a scheduling mechanism in `offscreen.js` to handle incoming audio chunks without jitter or silence gaps.
+- **Target-Only Subtitles:** Modified the backend to filter out English transcripts, ensuring the UI overlay only displays the selected Indian language.
+- **Multilingual Optimization:** 
+    - Switched to ElevenLabs `multilingual_v2` model for superior pronunciation of Indian languages.
+    - Set "Viraj" (`FmBhnvP58BK0vz65OOj7`) as the default voice for high-quality Indian accents.
+- **PCM Integrity:** Added logic to ensure all streamed audio chunks are even-sized (multiples of 2 bytes) for stable PCM 16-bit decoding in the browser.
+
+## Backend Refactoring
+- Refactored `ElevenLabsService` to support async generator streaming.
+- Cleaned up `main.py` pipeline logic to handle asynchronous translation and TTS triggers more efficiently.
+
+## Known Issues / Next Steps
+- **Language Support:** ElevenLabs lacks native voices for Telugu and other South Indian languages. Plan to integrate Sarvam AI's TTS for better regional coverage.
+- **Latency:** Continue monitoring end-to-end latency for real-time performance.

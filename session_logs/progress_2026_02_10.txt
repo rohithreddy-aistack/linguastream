@@ -1,0 +1,43 @@
+# Session Log: Tuesday, February 10, 2026
+
+## 🚀 Summary of Achievements
+Today we resolved critical SDK compatibility issues and fixed a logic error in the ASR stage that was preventing transcripts from being processed.
+
+### **1. Backend Bug Fixes & SDK Compatibility**
+*   **Deepgram SDK (v5.3.2) Fixes:**
+    *   **Async Connection:** Switched to `AsyncDeepgramClient` to support the asynchronous context manager protocol (`async with`).
+    *   **Message Loop (The "Pump"):** Fixed a critical bug where the WebSocket was connected but never read. Added an `async for message in connection` loop. Without this, the SDK buffer would fill up, leading to the `1011 keepalive ping timeout` error.
+    *   **Parameter Passing:** Fixed `DeepgramClient` constructor to use keyword arguments and updated `connect()` parameters (e.g., `encoding`, `sample_rate`) to the string formats expected by the new SDK.
+*   **ElevenLabs SDK Fixes:**
+    *   **Async Generator:** Resolved the `'async_generator' object can't be awaited` error by correctly iterating over the `convert()` result rather than awaiting it directly.
+    *   **PCM Format:** Verified `pcm_16000` is a valid output format for low-latency synthesis.
+
+### **2. Pipeline Improvements & Logging**
+*   **Data Traceability:** Added detailed logging in `main.py` to track:
+    *   Audio chunks received from the browser.
+    *   ASR transcripts received from Deepgram.
+    *   Translation results from Sarvam.
+    *   TTS audio generation and delivery status.
+*   **Frontend Synchronization:** Added logging to `offscreen.js`, `background.js`, and `content.js` to verify the flow of transcripts and binary audio from the backend to the UI overlay.
+
+### **3. Audio Ducking & Playback**
+*   **Real-time Dubbing:** Updated `offscreen.js` to play back all binary data from the WebSocket, allowing the user to hear the translated ElevenLabs audio.
+*   **Audio Ducking:** Implemented logic in `content.js` to automatically lower original video volume to 20% when dubbed audio is detected, restoring it after 2 seconds of silence.
+
+### **Errors Faced & Resolutions**
+| Error | Cause | Resolution |
+| :--- | :--- | :--- |
+| `ImportError: cannot import name 'LiveOptions'` | Deepgram SDK v5 removed top-level exports. | Imported types from `deepgram.extensions.types.sockets`. |
+| `TypeError: BaseClient.__init__()...` | Constructor required keyword arguments. | Changed `DeepgramClient(KEY)` to `DeepgramClient(api_key=KEY)`. |
+| `ConnectionClosedError: 1011 keepalive ping timeout` | Transcripts were never being read from the socket. | Added `async for message in connection` loop in `DeepgramService`. |
+| `'async_generator' object can't be awaited` | ElevenLabs `convert` returns an iterator. | Changed `await client.convert(...)` to `async for chunk in client.convert(...)`. |
+| `ModuleNotFoundError: No module named 'app'` | Running script from wrong directory. | Run via `uvicorn` or set `PYTHONPATH` from project root. |
+
+## 📝 Current Status
+*   **Backend:** Stable. All 3 stages (ASR -> Translate -> TTS) are communicating with APIs.
+*   **Frontend:** Overlay is reactive; audio playback and ducking are functional.
+*   **Overall:** The "Real-Time Dubbing Pipeline" is now end-to-end operational.
+
+## ⏭️ Next Steps
+1.  **Overlay UI Polishing:** Enhance the CSS for the transcript overlay to handle long sentences and multi-line text more gracefully.
+2.  **Latency Optimization:** Profile the "Time to First Byte" for the TTS stage to reduce the gap between English speech and Hindi/Telugu dubbing.

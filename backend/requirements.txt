@@ -13,3 +13,8 @@ sarvamai
 deepgram-sdk>=3.4.0
 elevenlabs
 requests
+# Dev/Test Dependencies
+pytest
+pytest-asyncio
+httpx
+ruff

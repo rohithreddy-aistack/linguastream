@@ -1,0 +1,36 @@
+name: Extension CI
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'clients/extension/**'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'clients/extension/**'
+
+jobs:
+  lint-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: Validate Manifest Version
+      run: |
+        VERSION=$(jq -r '.manifest_version' clients/extension/manifest.json)
+        if [ "$VERSION" != "3" ]; then
+          echo "Manifest must be Version 3"
+          exit 1
+        fi
+
+    - name: JavaScript Syntax Check
+      run: |
+        # Use find to check all js files for syntax errors using node -c
+        find clients/extension/src -name "*.js" -exec node -c {} \;
