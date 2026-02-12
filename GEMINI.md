@@ -5,38 +5,69 @@
 
 **Key Differentiator:** It handles "Code-Mixing" (Hinglish/Tanglish) natively using specialized AI models (**Sarvam AI**), ensuring technical terms remain in English while grammar and casual speech are translated.
 
-## 2. Architecture: "The Audio Interceptor"
+## 2. Architecture: "The Real-Time Dubbing Pipeline"
 
-The system follows a **Thin Client / Fat Server** model to minimize browser resource usage and maximize Python's audio processing capabilities.
+**Core Goal:** Real-time translation of **English Audio (Source)** into **Indian Language Audio (Target)**.
 
-### **Frontend: Chrome/Brave Extension (Manifest V3)**
-* **Role:** Audio Capture & UI Overlay.
-* **Mechanism:**
-    * **Background Script (`background.js`):** Orchestrates state (Rec/Stop) and manages the offscreen document lifecycle.
-    * **Offscreen Document (`offscreen.html`):** Bypasses Manifest V3 limitations to access the `AudioContext` and `ScriptProcessorNode`.
-    * **WebSocket Client (`offscreen.js`):** Streams raw PCM audio (Float32) to `127.0.0.1:8000`.
-    * **Content Script (`content.js`):** Injects the subtitle overlay onto the `<video>` player (Phase 2).
+The system follows a **3-Stage Sequential Pipeline** orchestrated by the Python Backend.
+
+### **The Pipeline (Strict 3-Step Architecture)**
+
+```mermaid
+sequenceDiagram
+    participant B as Browser (Extension)
+    participant P as Python (FastAPI)
+    participant D as Deepgram (ASR)
+    participant S as Sarvam (Translation)
+    participant E as ElevenLabs (TTS)
+
+    B->>P: 1. Stream Raw Audio (44.1kHz PCM)
+    P->>P: Resample (44.1kHz -> 16kHz)
+    P->>D: 2. Stream Audio to Deepgram
+    D-->>P: 3. English Transcript (Final)
+    P->>S: 4. Translate (English -> Target)
+    S-->>P: 5. Translated Text
+    P->>B: 6. Push Text to UI Overlay
+    P->>E: 7. Generate Audio (ElevenLabs)
+    E-->>P: 8. Stream Audio Chunks
+    P->>B: 9. Play Audio (Sync'd & Duck'd)
+```
+
+1.  **Stage 1: ASR (English Transcription)**
+    *   **Provider:** **Deepgram (Nova-2)**
+    *   **Input:** Raw Audio Stream (English) from Browser.
+    *   **Output:** Real-time English Transcript.
+    *   **Why:** Industry-leading speed and accuracy for streaming English.
+
+2.  **Stage 2: Translation (Text-to-Text)**
+    *   **Provider:** **Sarvam AI (Translate API)**
+    *   **Input:** English Text (from Stage 1).
+    *   **Output:** Indian Language Text (Hindi, Telugu, Tamil, Kannada).
+    *   **Why:** Optimized for Indian linguistic nuances and "Code-Mixing" (Hinglish).
+
+3.  **Stage 3: TTS (Speech Synthesis)**
+    *   **Provider:** **ElevenLabs (Multilingual v2)**
+    *   **Input:** Translated Text (from Stage 2).
+    *   **Output:** High-quality Indian Language Audio (16kHz PCM).
+    *   **Why:** Best-in-class voice quality and streaming support for gapless playback.
+
+### **Frontend: Chrome/Brave Extension**
+*   **Role:** Captures tab audio, sends to Backend, plays back the dubbed audio.
+*   **Audio Ducking:** When dubbed audio is received, the original YouTube video volume is lowered (ducked) to ~20%.
 
 ### **Backend: Python Orchestrator (FastAPI)**
-* **Role:** Signal Processing & AI Gateway.
-* **Tech Stack:** FastAPI, Uvicorn, NumPy, SciPy, PyTorch (CPU).
-* **Pipeline:**
-    1.  **Ingest:** Receives audio stream via WebSocket (`ws://127.0.0.1:8000`).
-    2.  **Resample:** Downsamples Browser Audio (44.1kHz/48kHz) to Model Audio (16kHz).
-    3.  **VAD Gate:** Uses **Silero VAD** (Voice Activity Detection) to detect human speech.
-        * *Music/Silence* -> **DROP** Packet (Saves API costs & prevents hallucinations).
-        * *Speech* -> **PASS** Packet.
-    4.  **Inference:** Forwards clean speech to **Sarvam AI** (Primary) or **Azure Speech SDK** (Fallback).
-    5.  **Response:** Sends translated text/audio back to the frontend.
+*   **Role:** Manages the WebSocket connection and chains the 3 API calls.
+*   **Latency Management:** Critical. Must handle asynchronous events between the 3 stages efficiently.
 
 ---
 
-## 3. Current Status (Week 1 Complete - Stable)
-* ✅ **Repository Setup:** Monorepo structure (`backend/`, `clients/extension`) established.
-* ✅ **Audio Capture:** Extension successfully captures tab audio using `tabCapture` and `offscreen` API.
-* ✅ **Connectivity:** WebSocket pipeline established between Chrome and Python (IPv4 `127.0.0.1` fix applied).
-* ✅ **VAD Integration:** Silero VAD successfully filters out background music/silence in real-time (Buffering logic implemented).
-* ✅ **Verification:** System successfully records a local `.wav` file containing only spoken segments from a YouTube video.
+## 3. Current Status (Week 5 Progress - Stable Streaming)
+* ✅ **Repository Setup:** Monorepo structure established.
+* ✅ **Audio Capture:** Extension successfully captures tab audio via `offscreen` API.
+* ✅ **3-Stage Pipeline:** Successfully orchestrated Deepgram (ASR) -> Sarvam (Translation) -> ElevenLabs (TTS).
+* ✅ **Streaming Audio:** Real-time TTS streaming implemented with gapless playback in the browser.
+* ✅ **Sync & Quality:** Resolved sample rate mismatches (16kHz) and optimized pronunciation using `multilingual_v2`.
+* ✅ **UI Overlay:** Real-time target language subtitles with automatic English filtering.
 
 ---
 
@@ -119,11 +150,11 @@ linguastream/
 * [x] Verification: `.wav` file recording.
 
 
-* **Week 2: Audio Resampling & Loopback Test (Current Focus)**
-* [ ] **Backend:** Refactor `main.py` to move logic into `audio/processor.py` for cleaner architecture.
-* [ ] **Backend:** Implement robust `scipy.signal.resample_poly` (44.1kHz -> 16kHz) to improve audio quality for the AI.
-* [ ] **Feature:** Create a "Loopback" endpoint. (Browser Mic -> Python -> Browser Speakers). This is critical to *hear* the latency delay.
-* [ ] **Frontend:** Update `popup.html` to show real-time connection status (Green/Red indicators) instead of just the browser badge.
+* **Week 2: Audio Resampling & Loopback Test (Completed)**
+* [x] **Backend:** Refactor `main.py` to move logic into `audio/processor.py` for cleaner architecture.
+* [x] **Backend:** Implement robust `scipy.signal.resample_poly` (44.1kHz -> 16kHz) to improve audio quality for the AI.
+* [x] **Feature:** Create a "Loopback" endpoint. (Browser Mic -> Python -> Browser Speakers). This is critical to *hear* the latency delay.
+* [x] **Frontend:** Update `popup.html` to show real-time connection status (Green/Red indicators) instead of just the browser badge.
 
 
 
@@ -131,32 +162,35 @@ linguastream/
 
 *Focus: Integrating Sarvam AI and handling Indian languages.*
 
-* **Week 3: Sarvam AI Integration**
-* [ ] **Backend:** Create `services/sarvam_client.py`.
-* [ ] **Protocol:** Implement the specific WebSocket handshake for Sarvam's `speech-to-text-translate` API.
-* [ ] **Authentication:** Securely load API keys from `.env`.
-* [ ] **Logic:** Handle Sarvam's "Partial" vs "Final" transcript events to reduce text flickering on the UI.
+* **Week 3: Sarvam AI Integration (Backend Complete)**
+* [x] **Backend:** Create `services/sarvam_client.py`.
+* [x] **Protocol:** Implement the specific WebSocket handshake for Sarvam's `speech-to-text-translate` API.
+* [x] **Authentication:** Securely load API keys from `.env`.
+* [x] **Logic:** Handle Sarvam's "Partial" vs "Final" transcript events to reduce text flickering on the UI.
 
 
 * **Week 4: The Visual Overlay (Subtitle Sync)**
-* [ ] **Frontend:** Build `content.js` to inject a floating, draggable `<div>` over the YouTube video player.
-* [ ] **Backend:** Send translated text *with timestamps* back to the extension.
-* [ ] **Sync Logic:** Implement a "Jitter Buffer" in `buffer.py`. (Calculate the delay between "Speech Sent" and "Text Received" and delay the display to match).
+* [x] **Frontend:** Build `content.js` to inject a floating, draggable `<div>` over the YouTube video player.
+* [x] **Backend:** Send translated text *with timestamps* back to the extension.
+* [x] **Sync Logic:** Implement a "Jitter Buffer" in `buffer.py`. (Calculate the delay between "Speech Sent" and "Text Received" and delay the display to match).
 
 
 
 ### **Phase 3: Robustness & Audio Dubbing (Weeks 5-6)**
 
-*Focus: Improving quality and adding the "Audio" mode.*
+*Focus: Improving quality and implementing the Real-Time Dubbing Pipeline.*
 
-* **Week 5: Azure Fallback & Error Handling**
-* [ ] **Backend:** Implement `services/azure_client.py` using the Azure Speech SDK.
-* [ ] **Circuit Breaker:** Logic: If Sarvam WebSocket errors rate > 5% in 1 minute, auto-switch stream to Azure.
-* [ ] **Security:** Implement `core/config.py` for secure key rotation and secret management.
+* **Week 5: Architecture Pivot & Streaming (Completed)**
+* [x] **Architecture:** Pivoted to 3-Stage Pipeline (Deepgram -> Sarvam -> ElevenLabs).
+* [x] **Frontend:** Added Language Picker to Extension Popup.
+* [x] **Backend:** Implemented `DeepgramService`, `SarvamTranslateService`, and `ElevenLabsService`.
+* [x] **Streaming:** Implemented async generator streaming for TTS audio.
+* [x] **Sync:** Fixed 16kHz playback synchronization and gapless scheduling in `offscreen.js`.
+* [x] **Testing:** Verified end-to-end latency and high-quality Hindi audio with "Viraj" voice.
 
 
 * **Week 6: Audio Dubbing (TTS) Mode**
-* [ ] **Backend:** Request Audio bytes (TTS) from Sarvam alongside text.
+* [ ] **Backend:** Optimize TTS latency (ElevenLabs Turbo v2.5).
 * [ ] **Frontend:** Implement "Audio Ducking" in `content.js`.
 * [ ] **Logic:** When translated audio arrives, set `videoElement.volume = 0.2` via JavaScript.
 * [ ] **Goal:** A "News Broadcast" style experience (Original low background, Translation loud foreground).
