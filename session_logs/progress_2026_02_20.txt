@@ -1,0 +1,26 @@
+# Progress Log: February 20, 2026
+
+## 1. Progress Made Today
+*   Switched TTS Providers: Successfully replaced ElevenLabs with Sarvam AI's Text-to-Speech (TTS) model (bulbul:v3) to support all 11 Indian languages with high-quality, native accents.
+*   Extended Language Support: Updated the extension UI (popup.html) to support exactly 11 languages (added en-IN and fixed od-IN Odia code).
+*   Resolved "Traditional Translation" Issue: Modified the Sarvam Translate API call to use "code-mixed" mode instead of "formal" mode. This ensures technical English terms remain in English while grammatically adapting to the selected Indian language.
+*   Optimized Real-Time Latency (Backend):
+    *   Decoupled the Deepgram ASR listener from the Translation/TTS pipeline by using an asyncio.Queue in main.py. This prevents the audio stream from blocking while generating TTS.
+    *   Switched to using Deepgram's speech_final event instead of is_final to wait for complete sentences before translating.
+    *   Added a dynamic dispatcher threshold (6 words or 1.5 seconds) to prevent infinite buffering when a speaker talks very quickly without taking a breath.
+    *   Increased the Sarvam TTS generation pace to 1.2 so translated audio duration more closely matches English speech duration.
+*   Improved Extension Teardown: Updated background.js to gracefully stop tab recording if the Python backend server disconnects or crashes, preventing zombie recording sessions in the browser.
+*   Workspace Cleanup: Reorganized manual testing scripts into backend/tests/manual/ and backend/tests/integration/ to preserve historical testing logic. Cleaned up obsolete .pcm and .wav artifacts.
+
+## 2. Errors & Challenges Faced
+*   Uvicorn Import Error (ModuleNotFoundError: No module named 'app'): Happened when trying to run the server from the project root instead of the backend/ directory.
+*   Translation Loop Error (400 Bad Request): Sarvam Translate API threw an error when the source (en-IN) and target (en-IN) languages were identical. Fixed by adding a condition in sarvam_translate_client.py to bypass the API call entirely if they match.
+*   Deepgram Buffer Backlog (50s delay): Deepgram's is_final was being handled synchronously. Waiting for TTS generation caused a massive queue of unprocessed audio. Fixed by adopting an asynchronous queue.
+*   Audio Drift (40s trailing audio): Translating from English to Indian languages often produces phonetically longer speech. As audio chunks queued up in the browser, latency cascaded over time. Fixed by accelerating the TTS pace (1.2) and removing artificial delays in offscreen.js.
+*   Sarvam "saaras:v3" WebSocket API: Explored bypassing Deepgram entirely by using Sarvam's direct Speech-to-Text-Translate WebSocket. Discovered that the endpoint (wss://api.sarvam.ai/speech-to-text-translate) rejects connections with a 403 Forbidden error, and the official Python SDK lacks streaming support. We are sticking to the 3-stage Deepgram -> Translate -> TTS pipeline.
+
+## 3. Next Steps (Roadmap)
+*   Finalize frontend UI styling (Subtitles overlay currently blocks some parts of the video).
+*   Benchmark audio resampling from scipy.signal vs other C-bindings if processing times slow down under load.
+*   Containerize the backend with Docker (Dockerfile and docker-compose.yml) for easy deployment.
+*   Develop the mobile implementation (Flutter WebView Bridge) to capture system audio on Android.
