@@ -13,15 +13,17 @@ chrome.runtime.onMessage.addListener(async (message) => {
 });
 
 async function startCapture(streamId, isLoopback, targetLanguage) {
-  const endpoint = isLoopback 
-    ? "ws://127.0.0.1:8000/ws/loopback" 
-    : `ws://127.0.0.1:8000/ws/stream?lang=${targetLanguage || 'hi-IN'}`;
-  
+  const endpoint = isLoopback
+    ? "ws://127.0.0.1:8000/ws/loopback"
+    : `ws://127.0.0.1:8000/ws/stream?lang=${targetLanguage || "hi-IN"}`;
+
   socket = new WebSocket(endpoint);
   socket.binaryType = "arraybuffer";
 
   socket.onopen = async () => {
-    console.log(`Connected to Python Server (${isLoopback ? 'Loopback' : 'Stream'})`);
+    console.log(
+      `Connected to Python Server (${isLoopback ? "Loopback" : "Stream"})`,
+    );
     chrome.runtime.sendMessage({ type: "WS_STATUS", status: "connected" });
 
     try {
@@ -37,12 +39,12 @@ async function startCapture(streamId, isLoopback, targetLanguage) {
 
       audioContext = new AudioContext({ sampleRate: 44100 });
       playbackContext = new AudioContext({ sampleRate: 16000 }); // Dedicated for TTS
-      
+
       const source = audioContext.createMediaStreamSource(mediaStream);
 
       processor = audioContext.createScriptProcessor(4096, 1, 1);
       source.connect(processor);
-      
+
       // Keep original audio playing
       processor.connect(audioContext.destination);
 
@@ -50,10 +52,12 @@ async function startCapture(streamId, isLoopback, targetLanguage) {
       processor.onaudioprocess = (e) => {
         if (socket.readyState === WebSocket.OPEN) {
           const inputData = e.inputBuffer.getChannelData(0);
-          
+
           if (chunkCount % 100 === 0) {
             const maxVal = Math.max(...inputData);
-            console.log(`Sending audio chunk ${chunkCount}, max amplitude: ${maxVal}`);
+            console.log(
+              `Sending audio chunk ${chunkCount}, max amplitude: ${maxVal}`,
+            );
           }
           chunkCount++;
 
@@ -93,33 +97,51 @@ async function startCapture(streamId, isLoopback, targetLanguage) {
 }
 
 let nextStartTime = 0;
+let activeSources = [];
 
 function playBuffer(arrayBuffer) {
   if (!playbackContext) return;
-  
+
   // Notify background that audio is playing (for ducking)
   chrome.runtime.sendMessage({ type: "AUDIO_PLAYING" });
-  
+
   const pcmData = new Int16Array(arrayBuffer);
   const float32Data = new Float32Array(pcmData.length);
   for (let i = 0; i < pcmData.length; i++) {
     float32Data[i] = pcmData[i] / 0x7fff;
   }
 
-  const audioBuffer = playbackContext.createBuffer(1, float32Data.length, 16000);
+  const audioBuffer = playbackContext.createBuffer(
+    1,
+    float32Data.length,
+    16000,
+  );
   audioBuffer.getChannelData(0).set(float32Data);
-  
+
   const source = playbackContext.createBufferSource();
   source.buffer = audioBuffer;
   source.connect(playbackContext.destination);
 
+  source.onended = () => {
+    const index = activeSources.indexOf(source);
+    if (index > -1) {
+      activeSources.splice(index, 1);
+    }
+  };
+  activeSources.push(source);
+
   // Scheduling for gapless playback
   const currentTime = playbackContext.currentTime;
+
+  let delay = nextStartTime - currentTime;
+
+  // Audio buffer catching-up logic
   if (nextStartTime < currentTime) {
     nextStartTime = currentTime;
   }
-  
+
   source.start(nextStartTime);
+
   nextStartTime += audioBuffer.duration;
 }
 
@@ -145,6 +167,7 @@ function stopCapture() {
     playbackContext = null;
   }
   nextStartTime = 0;
+  activeSources = [];
 }
 
 function convertFloat32ToInt16(buffer) {

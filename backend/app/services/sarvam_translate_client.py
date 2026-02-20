@@ -14,15 +14,18 @@ class SarvamTranslateService:
         if not text or not text.strip():
             return ""
 
+        if source_lang == target_lang:
+            return text
+
         payload = {
             "input": text,
             "source_language_code": source_lang,
             "target_language_code": target_lang,
             "speaker_gender": "Male", # Optional
-            "mode": "formal", # Optional
+            "mode": "code-mixed", # Optional
             "model": "mayura:v1" # Or whatever the latest translate model is
         }
-        
+
         headers = {
             "Content-Type": "application/json",
             "api-subscription-key": self.api_key

@@ -1,56 +1,63 @@
 let isRecording = false;
 let isLoopback = false;
-let connectionStatus = 'disconnected'; // 'disconnected', 'connected', 'error'
+let connectionStatus = "disconnected"; // 'disconnected', 'connected', 'error'
+let recordingTabId = null;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_STATUS") {
     sendResponse({ isRecording, connectionStatus, isLoopback });
-  } 
-  
-  else if (message.type === "TOGGLE_RECORDING") {
+  } else if (message.type === "TOGGLE_RECORDING") {
     if (isRecording) {
       stopRecording();
     } else {
       startRecording(message.targetLanguage);
     }
-  }
-
-  else if (message.type === "SET_LOOPBACK") {
+  } else if (message.type === "SET_LOOPBACK") {
     isLoopback = message.value;
     broadcastStatus();
-  }
-
-  else if (message.type === "WS_STATUS") {
+  } else if (message.type === "WS_STATUS") {
     connectionStatus = message.status;
-    broadcastStatus();
-  }
 
-  else if (message.type === "AUDIO_PLAYING") {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.sendMessage(tabs[0].id, { type: "DUCK_AUDIO" }).catch(() => {});
+    // Auto-stop capturing tab audio if the backend crashes or shuts down
+    if (message.status === "disconnected" || message.status === "error") {
+      if (isRecording) {
+        stopRecording();
       }
-    });
-  }
+    }
 
-  else if (message.type === "TRANSCRIPT") {
+    broadcastStatus();
+  } else if (message.type === "AUDIO_PLAYING") {
+    if (recordingTabId) {
+      chrome.tabs
+        .sendMessage(recordingTabId, { type: "DUCK_AUDIO" })
+        .catch(() => {});
+    }
+  } else if (message.type === "TRANSCRIPT") {
     console.log("Background received transcript:", message.data);
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        console.log("Forwarding transcript to tab:", tabs[0].id, "Text:", message.data.text);
-        chrome.tabs.sendMessage(tabs[0].id, { type: "SHOW_TRANSCRIPT", data: message.data }).catch((e) => {
+    if (recordingTabId) {
+      console.log(
+        "Forwarding transcript to tab:",
+        recordingTabId,
+        "Text:",
+        message.data.text,
+      );
+      chrome.tabs
+        .sendMessage(recordingTabId, {
+          type: "SHOW_TRANSCRIPT",
+          data: message.data,
+        })
+        .catch((e) => {
           console.error("Could not send to tab:", e);
         });
-      } else {
-        console.warn("No active tab found to send transcript.");
-      }
-    });
+    } else {
+      console.warn("No recording tab found to send transcript.");
+    }
   }
 });
 
 async function startRecording(targetLanguage) {
   console.log("Starting recording...", targetLanguage);
-  
+
   // 1. Create the offscreen document
   const existingContexts = await chrome.runtime.getContexts({});
   const offscreenDocument = existingContexts.find(
@@ -69,6 +76,8 @@ async function startRecording(targetLanguage) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) return;
 
+  recordingTabId = tab.id;
+
   // 3. Get the Stream ID
   const streamId = await chrome.tabCapture.getMediaStreamId({
     targetTabId: tab.id,
@@ -79,7 +88,7 @@ async function startRecording(targetLanguage) {
     type: "START_RECORDING",
     data: streamId,
     isLoopback: isLoopback,
-    targetLanguage: targetLanguage || "hi-IN" // Default to Hindi
+    targetLanguage: targetLanguage || "hi-IN", // Default to Hindi
   });
 
   isRecording = true;
@@ -92,18 +101,21 @@ function stopRecording() {
   console.log("Stopping recording...");
   chrome.runtime.sendMessage({ type: "STOP_RECORDING" });
   isRecording = false;
-  connectionStatus = 'disconnected';
+  recordingTabId = null;
+  connectionStatus = "disconnected";
   chrome.action.setBadgeText({ text: "" });
   broadcastStatus();
 }
 
 function broadcastStatus() {
-  chrome.runtime.sendMessage({
-    type: "STATUS_UPDATE",
-    isRecording,
-    connectionStatus,
-    isLoopback
-  }).catch(() => {
-    // Ignore error if popup is closed
-  });
+  chrome.runtime
+    .sendMessage({
+      type: "STATUS_UPDATE",
+      isRecording,
+      connectionStatus,
+      isLoopback,
+    })
+    .catch(() => {
+      // Ignore error if popup is closed
+    });
 }
