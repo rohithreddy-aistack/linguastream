@@ -7,7 +7,7 @@ class SarvamTranslateService:
         self.api_key = settings.SARVAM_API_KEY
         self.url = "https://api.sarvam.ai/translate" # Verify exact endpoint
 
-    async def translate(self, text: str, source_lang: str = "en-IN", target_lang: str = "hi-IN") -> str:
+    async def translate(self, text: str, source_lang: str = "en-IN", target_lang: str = "hi-IN", session: aiohttp.ClientSession = None) -> str:
         """
         Translates text from source to target language.
         """
@@ -31,10 +31,10 @@ class SarvamTranslateService:
             "api-subscription-key": self.api_key
         }
 
-        async with aiohttp.ClientSession() as session:
+        # Use provided session or create a temporary one
+        if session:
             try:
-                # Correct endpoint from documentation
-                async with session.post("https://api.sarvam.ai/translate", json=payload, headers=headers) as response:
+                async with session.post(self.url, json=payload, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
                         return data.get("translated_text", "")
@@ -45,3 +45,17 @@ class SarvamTranslateService:
             except Exception as e:
                 print(f"❌ Translation Request Failed: {e}")
                 return ""
+        else:
+            async with aiohttp.ClientSession() as new_session:
+                try:
+                    async with new_session.post(self.url, json=payload, headers=headers) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return data.get("translated_text", "")
+                        else:
+                            error_text = await response.text()
+                            print(f"❌ Sarvam Translate Error {response.status}: {error_text}")
+                            return ""
+                except Exception as e:
+                    print(f"❌ Translation Request Failed: {e}")
+                    return ""

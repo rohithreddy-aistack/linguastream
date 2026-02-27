@@ -3,6 +3,7 @@ import asyncio
 import json
 import uvicorn
 import time
+import aiohttp
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from app.audio.processor import AudioProcessor
 from app.services.deepgram_client import DeepgramService
@@ -17,8 +18,7 @@ BROWSER_RATE = 44100
 TARGET_RATE = 16000
 VAD_THRESHOLD = 0.5
 
-# Initialize Audio Processor (Keep VAD for local filtering if needed, or rely on Deepgram's VAD)
-# We will still use it for Resampling.
+# Initialize Audio Processor
 processor = AudioProcessor(
     browser_rate=BROWSER_RATE,
     target_rate=TARGET_RATE,
@@ -27,7 +27,54 @@ processor = AudioProcessor(
 
 @app.get("/")
 def home():
-    return {"status": "LinguaStream Backend is Running (3-Stage Pipeline)", "vad_loaded": True}
+    return {"status": "LinguaStream Backend is Running (3-Stage Optimized)", "vad_loaded": True}
+
+class OrderedAudioStreamer:
+    """
+    Ensures that audio chunks from parallel sentence processing
+    are streamed to the WebSocket in correct order.
+    """
+    def __init__(self, websocket: WebSocket):
+        self.websocket = websocket
+        self.next_index = 0
+        self.active_queues = {} # index -> asyncio.Queue
+        self.lock = asyncio.Lock()
+        self._stream_task = asyncio.create_task(self._stream_loop())
+
+    async def _stream_loop(self):
+        """Background task that pulls from queues in order."""
+        try:
+            while True:
+                # Wait for the next queue to exist
+                while self.next_index not in self.active_queues:
+                    await asyncio.sleep(0.05)
+                
+                queue = self.active_queues[self.next_index]
+                print(f"📡 [Streamer] Now streaming sentence {self.next_index}")
+                
+                while True:
+                    chunk = await queue.get()
+                    if chunk is None: # Sentinel for end of sentence
+                        break
+                    await self.websocket.send_bytes(chunk)
+                
+                # Cleanup and move to next
+                async with self.lock:
+                    del self.active_queues[self.next_index]
+                    self.next_index += 1
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"❌ [Streamer] Error: {e}")
+
+    async def get_queue(self, index: int) -> asyncio.Queue:
+        async with self.lock:
+            if index not in self.active_queues:
+                self.active_queues[index] = asyncio.Queue()
+            return self.active_queues[index]
+    
+    def cancel(self):
+        self._stream_task.cancel()
 
 @app.websocket("/ws/stream")
 async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
@@ -38,65 +85,71 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
     deepgram_service = DeepgramService()
     translator_service = SarvamTranslateService()
     tts_service = SarvamTTSService()
+    
+    # Shared HTTP session for all translation requests in this socket
+    http_session = aiohttp.ClientSession()
+    
+    # Ordered Streamer
+    audio_streamer = OrderedAudioStreamer(websocket)
+    
+    # Counter for preserving order
+    sentence_counter = 0
 
-    # --- Pipeline Logic ---
-    transcript_queue = asyncio.Queue()
+    async def process_sentence(index: int, transcript_text: str):
+        """
+        Stage 2 (Translate) and Stage 3 (TTS) for a single sentence.
+        Runs in parallel with other sentences.
+        """
+        queue = await audio_streamer.get_queue(index)
+        try:
+            # --- Stage 2: Translation (Sarvam) ---
+            start_translate = time.time()
+            target_text = await translator_service.translate(
+                transcript_text, 
+                target_lang=lang, 
+                session=http_session
+            )
+            print(f"🔄 [S{index}] Translate took {time.time()-start_translate:.2f}s")
 
-    async def process_queue():
-        while True:
-            transcript_text = await transcript_queue.get()
-            try:
-                # --- Stage 2: Translation (Sarvam) ---
-                print(f"🔄 [Translate] Translating to {lang}: '{transcript_text}'...")
-                target_text = await translator_service.translate(transcript_text, target_lang=lang)
+            if target_text:
+                # Send Target transcript to UI
+                try:
+                    await websocket.send_json({
+                        "type": "transcript",
+                        "text": target_text,
+                        "lang": lang,
+                        "is_final": True
+                    })
+                except Exception:
+                    pass
 
-                if target_text:
-                    print(f"🇮🇳 [Translate] Target ({lang}): {target_text}")
-
-                    # Send Target transcript to UI
-                    try:
-                        await websocket.send_json({
-                            "type": "transcript",
-                            "text": target_text,
-                            "lang": lang,
-                            "is_final": True
-                        })
-                        print(f"📤 Sent {lang} transcript to UI: {target_text}")
-                    except Exception as e:
-                        print(f"⚠️ Failed to send {lang} transcript: {e}")
-
-                    # --- Stage 3: TTS (Sarvam) ---
-                    print(f"🗣️ [TTS] Generating Audio for: '{target_text}'...")
-
-                    try:
-                        chunk_count = 0
-                        async for audio_chunk in tts_service.text_to_speech_stream(target_text, target_lang=lang):
-                            if audio_chunk:
-                                await websocket.send_bytes(audio_chunk)
-                                chunk_count += 1
-
-                        if chunk_count > 0:
-                            print(f"📤 Sent {chunk_count} TTS audio chunks to UI")
-                    except Exception as e:
-                        print(f"⚠️ Failed to stream TTS audio: {e}")
-            finally:
-                transcript_queue.task_done()
-
-    processing_task = asyncio.create_task(process_queue())
+                # --- Stage 3: TTS (Sarvam) ---
+                start_tts = time.time()
+                first_byte_time = None
+                
+                async for audio_chunk in tts_service.text_to_speech_stream(target_text, target_lang=lang, session=http_session):
+                    if first_byte_time is None:
+                        first_byte_time = time.time()
+                        print(f"⚡ [S{index}] First byte of TTS in {first_byte_time-start_tts:.2f}s")
+                    
+                    if audio_chunk:
+                        await queue.put(audio_chunk)
+                
+                print(f"🗣️ [S{index}] TTS Gen Finished. Total time: {time.time()-start_tts:.2f}s")
+                
+        except Exception as e:
+            print(f"⚠️ [S{index}] Error: {e}")
+        finally:
+            # Signal end of sentence audio
+            await queue.put(None)
 
     async def on_transcript_received(transcript_text, is_final):
-        """
-        Callback when Deepgram returns a transcript (Stage 1).
-        Triggers Stage 2 (Translation) and Stage 3 (TTS).
-        """
-        if not transcript_text:
-            return
-
-        print(f"🎤 [ASR] English: {transcript_text} (Final: {is_final})")
-
-        # Only translate/dub if the sentence is final
-        if is_final:
-            await transcript_queue.put(transcript_text)
+        nonlocal sentence_counter
+        if is_final and transcript_text:
+            print(f"🎤 [ASR] S{sentence_counter}: {transcript_text}")
+            # Launch parallel task for this sentence
+            asyncio.create_task(process_sentence(sentence_counter, transcript_text))
+            sentence_counter += 1
 
     # --- Start Deepgram ---
     await deepgram_service.connect(on_transcript_callback=on_transcript_received)
@@ -108,22 +161,10 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
         wav_file.setframerate(TARGET_RATE)
 
         try:
-            message_count = 0
             while True:
-                # 1. Receive Raw Audio from Browser
                 data = await websocket.receive_bytes()
-                message_count += 1
-
-                if message_count % 100 == 0:
-                    print(f"📥 Received {message_count} audio chunks from client...")
-
-                # 2. Resample (44.1k -> 16k)
                 audio_resampled = processor.resample_chunk(data)
-
-                # Write to local file (debug)
                 wav_file.writeframes(audio_resampled.tobytes())
-
-                # 3. Send to Deepgram (Stage 1 Input)
                 await deepgram_service.send_audio(audio_resampled.tobytes())
 
         except WebSocketDisconnect:
@@ -131,7 +172,8 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
         except Exception as e:
             print(f"\n⚠️ Error: {e}")
         finally:
-            processing_task.cancel()
+            audio_streamer.cancel()
+            await http_session.close()
             await deepgram_service.close()
 
 @app.websocket("/ws/loopback")
@@ -141,7 +183,6 @@ async def loopback_stream(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_bytes()
-            # Immediately send back for latency testing
             await websocket.send_bytes(data)
     except WebSocketDisconnect:
         print("❌ Loopback Client Disconnected")

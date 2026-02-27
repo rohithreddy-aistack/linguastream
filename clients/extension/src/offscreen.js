@@ -38,7 +38,7 @@ async function startCapture(streamId, isLoopback, targetLanguage) {
       });
 
       audioContext = new AudioContext({ sampleRate: 44100 });
-      playbackContext = new AudioContext({ sampleRate: 16000 }); // Dedicated for TTS
+      playbackContext = new AudioContext({ sampleRate: 24000 }); // Dedicated for TTS (bulbul:v3)
 
       const source = audioContext.createMediaStreamSource(mediaStream);
 
@@ -114,7 +114,7 @@ function playBuffer(arrayBuffer) {
   const audioBuffer = playbackContext.createBuffer(
     1,
     float32Data.length,
-    16000,
+    24000,
   );
   audioBuffer.getChannelData(0).set(float32Data);
 

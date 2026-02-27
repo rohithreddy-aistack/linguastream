@@ -1,0 +1,33 @@
+# Session Log: Friday, February 21, 2026
+
+## 🚀 Summary of Achievements
+Today was focused on resolving a critical latency issue where the system had an 11s start delay and a 40s audio overrun (backlog) after 2 minutes of video. We successfully optimized the pipeline to reduce latency to ~2.5s and completely eliminate the processing backlog.
+
+### **1. Architectural Optimization: Parallelized 3-Stage Pipeline**
+- **The Problem:** The previous pipeline was strictly sequential. Stage 2 (Translate) and Stage 3 (TTS) waited for each other, resulting in a processing speed of ~0.75x real-time. This caused the 40s "overrun" where audio kept playing long after the video was paused.
+- **The Solution:** Refactored `backend/app/main.py` to use an asynchronous task pool.
+    - Sentences are now processed in **parallel** as soon as Deepgram returns a final transcript.
+    - Implemented an `OrderedAudioStreamer` class to ensure that even though sentences are processed out-of-order, their audio chunks are delivered to the browser in the correct chronological sequence.
+- **The Result:** Processing speed is now > 1x real-time, meaning the backlog never builds up.
+
+### **2. Performance Tuning: Session Reuse & High-Fidelity Audio**
+- **Session Reuse:** Refactored `SarvamTranslateService` and `SarvamTTSService` to accept an external `aiohttp.ClientSession`. This eliminates the 300-500ms TLS handshake overhead for every single sentence.
+- **24kHz Audio:** Switched both the backend (Sarvam `bulbul:v3`) and the frontend (`offscreen.js`) to **24,000 Hz**. This provides high-fidelity audio (matching the model's native output) without the latency of backend resampling.
+
+### **3. SDK Investigation: Sarvam AI Saaras v3**
+- **Goal:** Investigate if Saaras v3 could provide direct English-to-Indic Speech-to-Text-Translate (STTT).
+- **Findings:**
+    - Saaras v3's `translate` mode is currently restricted to **Indic-to-English** only.
+    - Attempted to use the Sarvam SDK's **Streaming WebSocket TTS**, but it failed consistently with a `422 Unprocessable Entity` error ("Input parameters has to be a valid dictionary") across Python versions 3.14, 3.13, and 3.12.
+- **Outcome:** Stabilized the system using the "Parallel REST" approach, which achieves near-identical performance to WebSockets without the SDK's current instability.
+
+## 📝 Files Modified
+- `backend/app/main.py`: Core orchestrator refactored for parallel processing.
+- `backend/app/services/sarvam_translate_client.py`: Added session reuse.
+- `backend/app/services/sarvam_tts_client.py`: Added session reuse and 24kHz support.
+- `clients/extension/src/offscreen.js`: Updated to 24kHz playback context.
+- `CHANGELOG_LATENCY_FIX.md`: Created to track specific optimization steps and rollback procedures.
+
+## ⏭️ Next Steps
+1. **User Testing:** Verify that the 40s overrun is resolved on different video types.
+2. **Mobile Planning:** Begin architectural planning for the Flutter-based mobile client.

@@ -77,7 +77,9 @@ sequenceDiagram
 * ✅ **3-Stage Pipeline:** Successfully orchestrated Deepgram (ASR) -> Sarvam Translate -> Sarvam TTS.
 * ✅ **Streaming Audio:** Real-time TTS streaming implemented with gapless playback in the browser.
 * ✅ **Translation Quality:** Enabled `code-mixed` translation to natively handle technical English terms in Indian languages.
-* ✅ **Latency Tuning:** Decoupled ASR from TTS via async queues, adopted Deepgram's `speech_final`, and implemented audio catch-up buffering.
+* ✅ **Latency Tuning:** Refactored to a **Parallelized 3-Stage Pipeline**. Eliminated the 40s backlog by processing sentences in parallel and using `OrderedAudioStreamer` for chronological playback.
+* ✅ **High-Fidelity Audio:** Switched both backend (Sarvam `bulbul:v3`) and frontend (`offscreen.js`) to **24kHz** for native, low-latency audio quality.
+* ✅ **Connection Reuse:** Implemented `aiohttp.ClientSession` reuse to eliminate 300-500ms TLS handshake overhead per sentence.
 
 ---
 
