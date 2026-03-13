@@ -1,0 +1,33 @@
+# Session Log: Thursday, February 26, 2026
+
+## 🚀 Summary of Progress
+Today's session focused on exploring local Speech-to-Text (STT) to further reduce pipeline latency and improve independence from cloud providers.
+
+### **1. Git & Identity Management**
+- **User Update:** Changed Git username to `rohithreddy-aistack` and email to `rohitreddyjaggari@gmail.com`.
+- **Commit & Push:** Staged and pushed the Week 6 optimized pipeline (Parallel REST + `OrderedAudioStreamer`) to GitHub. This established a clean baseline before starting local STT experiments.
+
+### **2. Local STT Implementation (Whisper)**
+- **Environment:** Installed `openai-whisper` and `ffmpeg` (via Homebrew) on the M4 Mac.
+- **Service Integration:**
+    - Created `backend/app/services/whisper_service.py`: A local ASR service that buffers 2.0s chunks and transcribes them using OpenAI Whisper via `MPS` (Apple Silicon GPU acceleration).
+    - Modified `backend/app/main.py`: Introduced a `USE_LOCAL_WHISPER` toggle to switch between Deepgram (Cloud) and Whisper (Local).
+- **Latency Reduction:** Verified that total pipeline start-up latency dropped from **~11s to ~5s**, and the end-of-video backlog reduced from **40s to ~5-10s**.
+
+### **3. Performance & Quality Benchmarking**
+| Model | Real-Time Factor (RTF) | Quality Observation | Status |
+| :--- | :--- | :--- | :--- |
+| **Whisper `tiny`** | **0.052x** | Fast but frequent "hallucinations" or missed nuances. | Integrated & Tested |
+| **Whisper `base`** | **0.047x** | High accuracy, successfully captured complex speech (Colbert sample). | Recommended for Next Session |
+| **Whisper `small`** | **N/A** | Crashed with `ValueError: Categorical(logits... found invalid values: tensor([[nan...]])` on MPS. | Incompatible with current MPS |
+
+### **4. Reasoning & Next Steps**
+- **Decision:** The `tiny` model, while fast, compromises the translation quality of the entire pipeline. The `base` model provides a "sweet spot" on the M4, offering nearly the same speed (RTF < 0.05x) with significantly better transcription accuracy.
+- **Next Session Goal:** Update `WhisperService` to use the `base` model and fine-tune the chunk duration (currently 2.0s) to balance transcript accuracy with real-time responsiveness.
+- **Current State:** The code is functional with `tiny` Whisper. The backend is ready to be switched to `base`.
+
+## 📝 Files Modified/Created
+- `backend/app/services/whisper_service.py` (New: Local ASR service)
+- `backend/app/main.py` (Updated: ASR abstraction and toggle)
+- `test_whisper_latency.py` (Benchmark script)
+- `test_whisper_quality.py` (Benchmark script)

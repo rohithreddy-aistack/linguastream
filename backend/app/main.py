@@ -27,7 +27,10 @@ processor = AudioProcessor(
 
 @app.get("/")
 def home():
-    return {"status": "LinguaStream Backend is Running (3-Stage Optimized)", "vad_loaded": True}
+    return {
+        "status": "LinguaStream Backend is Running (3-Stage Optimized)", 
+        "asr_mode": "Deepgram (Cloud)"
+    }
 
 class OrderedAudioStreamer:
     """
@@ -79,10 +82,11 @@ class OrderedAudioStreamer:
 @app.websocket("/ws/stream")
 async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
     await websocket.accept()
-    print(f"✅ Client Connected (Stream) | Target Lang: {lang}")
+    asr_mode = "DEEPGRAM"
+    print(f"✅ Client Connected (Stream) | Target Lang: {lang} | ASR: {asr_mode}")
 
     # --- Initialize Services ---
-    deepgram_service = DeepgramService()
+    asr_service = DeepgramService()
     translator_service = SarvamTranslateService()
     tts_service = SarvamTTSService()
     
@@ -109,7 +113,7 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
                 target_lang=lang, 
                 session=http_session
             )
-            print(f"🔄 [S{index}] Translate took {time.time()-start_translate:.2f}s")
+            print(f"🔄 [S{index}] Translate took {time.time()-start_translate:.2f}s | Text: {target_text}")
 
             if target_text:
                 # Send Target transcript to UI
@@ -151,8 +155,8 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
             asyncio.create_task(process_sentence(sentence_counter, transcript_text))
             sentence_counter += 1
 
-    # --- Start Deepgram ---
-    await deepgram_service.connect(on_transcript_callback=on_transcript_received)
+    # --- Start ASR Service ---
+    await asr_service.connect(on_transcript_callback=on_transcript_received)
 
     # Open WAV file for debug recording
     with wave.open(OUTPUT_FILE, "wb") as wav_file:
@@ -165,7 +169,7 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
                 data = await websocket.receive_bytes()
                 audio_resampled = processor.resample_chunk(data)
                 wav_file.writeframes(audio_resampled.tobytes())
-                await deepgram_service.send_audio(audio_resampled.tobytes())
+                await asr_service.send_audio(audio_resampled.tobytes())
 
         except WebSocketDisconnect:
             print(f"\n❌ Client Disconnected.")
@@ -174,7 +178,7 @@ async def audio_stream(websocket: WebSocket, lang: str = "hi-IN"):
         finally:
             audio_streamer.cancel()
             await http_session.close()
-            await deepgram_service.close()
+            await asr_service.close()
 
 @app.websocket("/ws/loopback")
 async def loopback_stream(websocket: WebSocket):
